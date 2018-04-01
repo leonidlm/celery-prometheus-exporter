@@ -29,6 +29,8 @@ TASKS_NAME = prometheus_client.Gauge(
     ['state', 'name'])
 WORKERS = prometheus_client.Gauge(
     'celery_workers', 'Number of alive workers')
+INACTIVE_WORKERS = prometheus_client.Gauge(
+    'celery_workers_inactive', 'Number of inactive workers')
 LATENCY = prometheus_client.Histogram(
     'celery_task_latency', 'Seconds between a task is received and started.')
 
@@ -142,7 +144,18 @@ class WorkerMonitoringThread(threading.Thread):
     def run(self):  # pragma: no cover
         while True:
             self.update_workers_count()
+            self.update_inactive_workers_count()
             time.sleep(self.periodicity_seconds)
+
+    def update_inactive_workers_count(self):
+        inactive = 0
+        try:
+            for w,v in self._app.control.inspect().active().items():
+                if not v:
+                    inactive += 1
+            INACTIVE_WORKERS.set(inactive)
+        except Exception as exc: # pragma: no cover
+            self.log.error("Error while inspecting inactive workers: %r", exc)
 
     def update_workers_count(self):
         try:
@@ -158,6 +171,7 @@ def setup_metrics(app):
     even before the first event is received, data can be exposed.
     """
     WORKERS.set(0)
+    INACTIVE_WORKERS.set(0)
     try:
         registered_tasks = app.control.inspect().registered_tasks().values()
     except Exception:  # pragma: no cover
